@@ -1,2 +1,3 @@
 # svg2png
-Command line converter .SVG to .PNG (and BMP, JPG, PNM)
+Command line converter .SVG to .PNG (and BMP, JPG, PNM).
+Requires BGRABitmap.
