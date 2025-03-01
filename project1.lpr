@@ -6,10 +6,69 @@ uses
   {$IFDEF UNIX}
   cthreads,
   {$ENDIF}
-  Interfaces, Classes, Graphics, SysUtils, BGRABitmap, BGRASVG, BGRAClasses, BGRABitmapTypes;
+  Interfaces, Classes, Graphics, SysUtils, BGRABitmap, BGRASVG, BGRAClasses, BGRABitmapTypes, ZStream;
 
 const PROG = 'svg2png';
-      VERSION = '1.0';
+      VERSION = '1.1';
+
+type THead = packed record
+       Magic: Word;
+       Method: Byte;
+       Flag: Byte;
+       DateTime: Cardinal;
+       XFlag: Byte;
+       Host: Byte;
+     end;
+
+function UnGzip(InStr, OutStr: TStream): Boolean;
+var Head: THead;
+    ExtraLen: Word;
+    Crc16: Word;
+    Zero: Byte;
+    Deflate: TDecompressionStream;
+    i: Integer;
+    Buff: array of Byte;
+    Len: Integer;
+begin
+  Result := False;
+  InStr.Read(Head, SizeOf(THead));
+
+  if (Head.Magic <> $8b1f) or (Head.Method <> 8) then Exit;
+
+  if (Head.Flag and 4) = 4 then begin
+    InStr.Read(ExtraLen, 2);
+    InStr.Position := InStr.Position + ExtraLen;
+  end;
+  if (Head.Flag and 8) = 8 then begin
+    for i:=InStr.Position to InStr.Size do begin
+      InStr.Read(Zero, 1);
+      if Zero = 0 then break;
+    end;
+  end;
+  if (Head.Flag and 16) = 16 then begin
+    for i:=InStr.Position to InStr.Size do begin
+      InStr.Read(Zero, 1);
+      if Zero = 0 then break;
+    end;
+  end;
+  if (Head.Flag and 2) = 2 then begin
+    InStr.Read(Crc16, 2);
+  end;
+
+  Deflate := TDecompressionStream.Create(InStr, True);
+  SetLength(Buff, 4096);
+
+  try
+    while True do begin
+      Len := Deflate.Read(Buff[0], 4096);
+      OutStr.Write(Buff[0], Len);
+      if Len < 4096 then break;
+    end;
+  finally
+    Deflate.Free;
+    Result := True;
+  end;
+end;
 
 function Convert(InName, OutName: String; UserDpi: Integer): Integer;
 var Pic: TPicture;
@@ -20,8 +79,22 @@ var Pic: TPicture;
     Dpi: TPointF;
     Bmp2: TBGRABitmap;
     Scale: Single;
+    InMem, OutMem: TStream;
 begin
   Result := 0;
+
+  Ext := LowerCase(ExtractFileExt(InName));
+
+  if (Ext = '.gz') or (Ext = '.svgz') then begin
+    InMem := TFileStream.Create(InName, fmOpenRead or fmShareDenyWrite);
+    OutMem := TMemoryStream.Create;
+    Ungzip(InMem, OutMem);
+    InMem.Free;
+    OutMem.Position := 0;
+  end
+  else begin
+    OutMem := TFileStream.Create(InName, fmOpenRead or fmShareDenyWrite);
+  end;
 
   if UserDpi < 10 then UserDpi := 10
   else if UserDpi > 900 then UserDpi := 900;
@@ -31,7 +104,7 @@ begin
 
   try
     H := TBGRASVG.Create;
-    H.LoadFromFile(InName);
+    H.LoadFromStream(OutMem);
 
     Bmp2 := TBgraBitmap.Create;
     Bmp2.SetSize(Round(H.WidthAsPixel*Scale), Round(H.HeightAsPixel*Scale));
@@ -46,7 +119,7 @@ begin
 
     Bmp2.Draw(Bmp.Canvas, 0,0, False);
     Bmp2.Free;
-
+    OutMem.Free;
   except
     Writeln('Conversion error');
     Exit(1);
@@ -78,6 +151,7 @@ begin
     Writeln('  Usage: ', PROG, ' INPUT OUTPUT DPI');
     Writeln('  Output format is guessed from extension.');
     Writeln('  Supported: bmp,jpg,png,ppm');
+    Writeln('  Supported input: svg,svgz,svg.gz');
     Writeln('  Dpi is optional. Supported values: 10-900, default: 96.');
     ExitCode := 0;
     Exit;
