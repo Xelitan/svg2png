@@ -9,7 +9,7 @@ uses
   Interfaces, Classes, Graphics, SysUtils, BGRABitmap, BGRASVG, BGRAClasses, BGRABitmapTypes, ZStream;
 
 const PROG = 'svg2png';
-      VERSION = '1.1';
+      VERSION = '1.2';
 
 type THead = packed record
        Magic: Word;
@@ -70,7 +70,7 @@ begin
   end;
 end;
 
-function Convert(InName, OutName: String; UserDpi: Integer): Integer;
+function Convert(InName, OutName: String; UserDpi: Integer; Opaque: String): Integer;
 var Pic: TPicture;
     Img: TGraphic;
     Ext: String;
@@ -80,6 +80,8 @@ var Pic: TPicture;
     Bmp2: TBGRABitmap;
     Scale: Single;
     InMem, OutMem: TStream;
+    MinL, MinT: Integer;
+    FillColor: TBGRAPixel;
 begin
   Result := 0;
 
@@ -102,20 +104,26 @@ begin
   Dpi := PointF(UserDpi, UserDpi);
   Scale := UserDpi/96;
 
+  if Opaque = '1' then FillColor := $FFFFFF
+  else FillColor := StrToInt(Opaque);
+
   try
     H := TBGRASVG.Create;
     H.LoadFromStream(OutMem);
 
+    MinL := Round(H.ViewBox.min.x);
+    MinT := Round(H.ViewBox.min.y);
+
     Bmp2 := TBgraBitmap.Create;
     Bmp2.SetSize(Round(H.WidthAsPixel*Scale), Round(H.HeightAsPixel*Scale));
-    H.Draw(Bmp2.Canvas2D, 0,0, Dpi);
+    if Opaque <> '0' then
+      Bmp2.FillRect(0,0, Bmp2.Width, Bmp2.Height, FillColor);
+    H.Draw(Bmp2.Canvas2D, -MinL,-MinT, Dpi);
     H.Free;
 
     Bmp := TBitmap.Create;
     Bmp.PixelFormat := pf32bit;
     Bmp.SetSize(Bmp2.Width, Bmp2.Height);
-    Bmp.Canvas.Brush.Color := clWhite;
-    Bmp.Canvas.FillRect(0,0, Bmp.Width, Bmp.Height);
 
     Bmp2.Draw(Bmp.Canvas, 0,0, False);
     Bmp2.Free;
@@ -139,20 +147,38 @@ begin
   Img.Free;
 end;
 
-var UserDpi: Integer;
+function ParseOpaque(Str: String): String;
+var Color: Int64;
 begin
-  if (ParamCount <> 2) and (ParamCount <> 3) then begin
+  if (Str = '1') or (Str = '0') then Exit(Str);
+
+  if Length(Str) <> 7 then Exit('0');
+
+  if Str[1] <> '#' then Exit('0');
+
+  Color := StrToInt64Def('$'+Copy(Str, 2), -1);
+
+  if Color = -1 then Exit('0');
+
+  Result := IntToStr(Color);
+end;
+
+var UserDpi: Integer;
+    Opaque: String;
+begin
+  if (ParamCount <> 2) and (ParamCount <> 3) and (ParamCount <> 4) then begin
     Writeln('===================================================');
     Writeln('  ', PROG, ' - .SVG to .PNG image converter');
     Writeln('  github.com/Xelitan/', PROG);
     Writeln('  version: ', VERSION);
     Writeln('  license: GNU LGPL'); //like BGRA
     Writeln('===================================================');
-    Writeln('  Usage: ', PROG, ' INPUT OUTPUT DPI');
+    Writeln('  Usage: ', PROG, ' INPUT OUTPUT DPI OPAQUE');
     Writeln('  Output format is guessed from extension.');
     Writeln('  Supported: bmp,jpg,png,ppm');
     Writeln('  Supported input: svg,svgz,svg.gz');
     Writeln('  Dpi is optional. Supported values: 10-900, default: 96.');
+    Writeln('  Opaque is optional. Supported values: 0,1 or color in hex: #FFFFFF.');
     ExitCode := 0;
     Exit;
   end;
@@ -160,7 +186,10 @@ begin
   if ParamCount = 3 then UserDpi := StrToInt64Def(ParamStr(3), 96)
   else UserDpi := 96;
 
-  ExitCode := Convert(ParamStr(1), ParamStr(2), UserDpi);
+  if ParamCount = 4 then Opaque := ParseOpaque(ParamStr(4))
+  else Opaque := '0';
+
+  ExitCode := Convert(ParamStr(1), ParamStr(2), UserDpi, Opaque);
 end.
 
 
